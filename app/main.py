@@ -6,6 +6,7 @@ FastAPI instance named `app` at app/main.py with zero extra config.
 """
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
@@ -27,13 +28,26 @@ BASE_DIR = Path(__file__).resolve().parent
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    init_cache_db()
+    # Cache is a nice-to-have, never a reason the whole app should fail to
+    # start — mirrors the fail-open philosophy already used inside
+    # get_cached/set_cached. A read-only filesystem, a missing /tmp, or any
+    # other cache-init problem should degrade to "no cache", not a crash.
+    try:
+        init_cache_db()
+    except Exception as exc:
+        logging.getLogger(__name__).warning("Cache init failed, continuing without a persistent cache: %s", exc)
     yield
 
 
 app = FastAPI(title=APP_NAME, lifespan=lifespan)
 
-app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+# Defensive: create static/ if it's missing (e.g. an empty directory that
+# didn't survive a git commit, since git doesn't track empty dirs) rather
+# than letting StaticFiles crash the whole app at import time.
+_static_dir = BASE_DIR / "static"
+_static_dir.mkdir(parents=True, exist_ok=True)
+
+app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 app.include_router(recommend_router)

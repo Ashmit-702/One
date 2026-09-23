@@ -1,0 +1,3 @@
+This file exists so app/static/ is tracked by git even though it's
+currently empty. app/main.py also creates this directory at runtime if
+it's missing, but keeping this ensures it survives a fresh git commit too.
