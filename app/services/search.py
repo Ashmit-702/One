@@ -9,9 +9,6 @@ from __future__ import annotations
 import logging
 import time
 
-from duckduckgo_search import DDGS
-from duckduckgo_search.exceptions import DuckDuckGoSearchException, RatelimitException
-
 from app.models.schemas import SearchResult
 from app.config import SEARCH_MAX_RESULTS, SEARCH_REGION
 
@@ -26,7 +23,7 @@ _RETRY_BACKOFF_SECONDS = 2.0
 
 
 class SearchError(Exception):
-    """Raised when the search backend fails after retries."""
+    """Raised when the search backend fails after retries, or can't be loaded at all."""
 
 
 def _build_search_query(query: str) -> str:
@@ -44,7 +41,22 @@ def search_products(query: str, max_results: int = SEARCH_MAX_RESULTS) -> list[S
     Retries on rate-limit/transient errors with linear backoff. Raises
     SearchError if the backend keeps failing — callers (the API layer)
     decide how to surface that to the user.
+
+    The duckduckgo_search import is deliberately deferred to inside this
+    function rather than done at module level. It pulls in `primp`, a
+    compiled (Rust) native dependency — on some serverless runtimes a
+    mismatched prebuilt wheel can fail to import. Importing it lazily
+    means that failure only breaks search requests (a clean SearchError
+    -> 502), not the entire app at cold start, which is what happens if a
+    module-level import throws during a `from app.routers.recommend
+    import ...` chain that main.py depends on to boot at all.
     """
+    try:
+        from duckduckgo_search import DDGS
+        from duckduckgo_search.exceptions import DuckDuckGoSearchException, RatelimitException
+    except Exception as exc:  # ImportError or a native-extension load failure
+        raise SearchError(f"duckduckgo_search could not be loaded on this platform: {exc}") from exc
+
     search_query = _build_search_query(query)
     last_error: Exception | None = None
 
